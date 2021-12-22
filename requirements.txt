@@ -1,0 +1,4 @@
+git+https://github.com/AustinHellerRepo/Common
+git+https://github.com/AustinHellerRepo/Threading
+git+https://github.com/AustinHellerRepo/Socket
+cryptography
