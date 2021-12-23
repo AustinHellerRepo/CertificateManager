@@ -43,9 +43,7 @@ def get_default_local_host_pointer() -> HostPointer:
 def get_default_certificate_manager_client() -> CertificateManagerClient:
 	return CertificateManagerClient(
 		client_socket_factory=ClientSocketFactory(
-			to_server_packet_bytes_length=4096,
-			server_read_failed_delay_seconds=0,
-			is_ssl=False
+			to_server_packet_bytes_length=4096
 		),
 		server_host_pointer=get_default_local_host_pointer()
 	)
@@ -56,9 +54,7 @@ def get_default_certificate_manager_server() -> CertificateManagerServer:
 		server_socket_factory=ServerSocketFactory(
 			to_client_packet_bytes_length=4096,
 			listening_limit_total=10,
-			accept_timeout_seconds=1.0,
-			client_read_failed_delay_seconds=0,
-			is_ssl=False
+			accept_timeout_seconds=1.0
 		),
 		server_host_pointer=get_default_local_host_pointer(),
 		public_certificate_file_path=get_default_public_certificate_file_path(),
