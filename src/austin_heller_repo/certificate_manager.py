@@ -3,6 +3,8 @@ from typing import List, Tuple, Dict, Callable, Type
 import time
 import base64
 import uuid
+import os
+import errno
 from datetime import datetime, timedelta
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -30,8 +32,22 @@ class Certificate():
 	# private_key_file_path should be something like "certname.key"
 	# signed_certificate_file_path should be something like "certname.crt"
 	def save_to_file(self, *, private_key_file_path: str, signed_certificate_file_path: str):
+
+		if not os.path.exists(os.path.dirname(private_key_file_path)):
+			try:
+				os.makedirs(os.path.dirname(private_key_file_path))
+			except OSError as ex:
+				if ex.errno != errno.EEXIST:
+					raise
 		with open(private_key_file_path, "wb") as file_handle:
 			file_handle.write(self.__private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()))
+
+		if not os.path.exists(os.path.dirname(signed_certificate_file_path)):
+			try:
+				os.makedirs(os.path.dirname(signed_certificate_file_path))
+			except OSError as ex:
+				if ex.errno != errno.EEXIST:
+					raise
 		with open(signed_certificate_file_path, "wb") as file_handle:
 			file_handle.write(self.__signed_certificate.public_bytes(serialization.Encoding.PEM))
 
