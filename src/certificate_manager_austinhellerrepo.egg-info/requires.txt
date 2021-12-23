@@ -1,3 +1,4 @@
 common-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Common
 threading-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Threading
 socket-austinhellerrepo@ git+https://github.com/AustinHellerRepo/Socket
+cryptography
