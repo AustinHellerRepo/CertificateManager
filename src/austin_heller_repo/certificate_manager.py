@@ -102,7 +102,7 @@ class Certificate():
 		return signed_certificate
 
 	@staticmethod
-	def create_self_signed_certificate(*, key_size: int, name: str, valid_days_total: int) -> Certificate:
+	def create_self_signed_certificate(*, name: str, valid_days_total: int = 30, key_size: int = 2048) -> Certificate:
 		# https://stackoverflow.com/questions/56285000/python-cryptography-create-a-certificate-signed-by-an-existing-ca-and-export
 
 		private_key = rsa.generate_private_key(
@@ -152,7 +152,7 @@ class CertificateManagerClient():
 			port=self.__server_host_pointer.get_host_port()
 		)
 
-	def request_certificate(self, *, key_size: int, name: str) -> Certificate:
+	def request_certificate(self, *, name: str, key_size: int = 2048) -> Certificate:
 
 		private_key = rsa.generate_private_key(
 			public_exponent=65537,
