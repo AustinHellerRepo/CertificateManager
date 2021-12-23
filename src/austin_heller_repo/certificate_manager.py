@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from cryptography.x509.oid import NameOID
-from austin_heller_repo.socket import ClientSocketFactory, ClientSocket, ServerSocketFactory, ServerSocket
+from austin_heller_repo.socket import ClientSocketFactory, ClientSocket, ServerSocketFactory, ServerSocket, ReadWriteSocketClosedException
 from austin_heller_repo.common import HostPointer
 
 
@@ -247,8 +247,11 @@ class CertificateManagerServer():
 			signed_certificate_base64_string = signed_certificate_base64_bytes.decode()
 
 			client_socket.write(signed_certificate_base64_string)
+		except ReadWriteSocketClosedException as ex:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: client socket closed")
+			pass
 		except Exception as ex:
-			print(f"CertificateManagerServer: __on_accepted_client_method: ex: {ex}")
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: ex: {ex}")
 			raise ex
 		finally:
 			client_socket.close()
@@ -256,7 +259,7 @@ class CertificateManagerServer():
 	def start_accepting_clients(self):
 
 		if self.__server_socket is not None:
-			raise Exception(f"Already started accepting clients")
+			raise Exception(f"{datetime.utcnow()}: already started accepting clients")
 
 		self.__server_socket = self.__server_socket_factory.get_server_socket()
 		self.__server_socket.start_accepting_clients(
