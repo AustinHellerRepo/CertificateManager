@@ -5,7 +5,9 @@ import base64
 import uuid
 import os
 import errno
+import tempfile
 from datetime import datetime, timedelta
+from enum import IntEnum
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
@@ -132,85 +134,126 @@ class Certificate():
 		)
 
 
+class CertificateManagerClientMessageTypeEnum(IntEnum):
+	RequestSignedCertificate = 1
+	RequestRootCertificate = 2
+
+
 class CertificateManagerClient():
 
-	def __init__(self, *, client_socket_factory: ClientSocketFactory, server_host_pointer: HostPointer):
+	def __init__(self, *, client_socket_factory: ClientSocketFactory, server_host_pointer: HostPointer, is_debug: bool = False):
 
 		self.__client_socket_factory = client_socket_factory
 		self.__server_host_pointer = server_host_pointer
+		self.__is_debug = is_debug
 
-		self.__client_socket = None  # type: ClientSocket
+	def request_certificate(self, *, name: str, key_size: int = 2048) -> Certificate:
 
-	def connect_to_server(self):
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerClient: request_certificate: start")
 
-		if self.__client_socket is not None:
-			raise Exception(f"Already connected to server")
-
-		self.__client_socket = self.__client_socket_factory.get_client_socket()
-		self.__client_socket.connect_to_server(
+		client_socket = self.__client_socket_factory.get_client_socket()
+		client_socket.connect_to_server(
 			ip_address=self.__server_host_pointer.get_host_address(),
 			port=self.__server_host_pointer.get_host_port()
 		)
 
-	def request_certificate(self, *, name: str, key_size: int = 2048) -> Certificate:
+		try:
+			client_socket.write(str(CertificateManagerClientMessageTypeEnum.RequestSignedCertificate.value))
 
-		private_key = rsa.generate_private_key(
-			public_exponent=65537,
-			key_size=key_size,
-			backend=default_backend()
-		)
-
-		builder = x509.CertificateSigningRequestBuilder() \
-			.subject_name(x509.Name([
-				x509.NameAttribute(NameOID.COMMON_NAME, name)
-			])) \
-			.add_extension(
-				extval=x509.BasicConstraints(
-					ca=False,
-					path_length=None
-				),
-				critical=True
+			private_key = rsa.generate_private_key(
+				public_exponent=65537,
+				key_size=key_size,
+				backend=default_backend()
 			)
 
-		request = builder.sign(
-			private_key=private_key,
-			algorithm=hashes.SHA256(),
-			backend=default_backend()
+			builder = x509.CertificateSigningRequestBuilder() \
+				.subject_name(x509.Name([
+					x509.NameAttribute(NameOID.COMMON_NAME, name)
+				])) \
+				.add_extension(
+					extval=x509.BasicConstraints(
+						ca=False,
+						path_length=None
+					),
+					critical=True
+				)
+
+			request = builder.sign(
+				private_key=private_key,
+				algorithm=hashes.SHA256(),
+				backend=default_backend()
+			)
+
+			request_bytes = request.public_bytes(Encoding.PEM)
+			request_base64_bytes = base64.b64encode(request_bytes)  # type: bytes
+			request_base64_string = request_base64_bytes.decode()
+
+			client_socket.write(request_base64_string)
+
+			response_base64_string = client_socket.read()
+			response_base64_bytes = response_base64_string.encode()
+			response_bytes = base64.b64decode(response_base64_bytes)
+
+			certificate = Certificate.load_from_bytes(
+				private_key_bytes=private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()),
+				signed_certificate_bytes=response_bytes
+			)
+
+			return certificate
+		except Exception as ex:
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerClient: request_certificate: ex: {ex}")
+			raise
+		finally:
+			client_socket.close()
+
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerClient: request_certificate: end")
+
+	def get_root_certificate(self, *, save_to_file_path: str):
+
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerClient: get_root_certificate: start")
+
+		client_socket = self.__client_socket_factory.get_client_socket()
+		client_socket.connect_to_server(
+			ip_address=self.__server_host_pointer.get_host_address(),
+			port=self.__server_host_pointer.get_host_port()
 		)
 
-		request_bytes = request.public_bytes(Encoding.PEM)
-		request_base64_bytes = base64.b64encode(request_bytes)  # type: bytes
-		request_base64_string = request_base64_bytes.decode()
+		try:
+			client_socket.write(str(CertificateManagerClientMessageTypeEnum.RequestRootCertificate.value))
 
-		self.__client_socket.write(request_base64_string)
+			response_base64_string = client_socket.read()
+			response_base64_bytes = response_base64_string.encode()
+			response_bytes = base64.b64decode(response_base64_bytes)
 
-		response_base64_string = self.__client_socket.read()
-		response_base64_bytes = response_base64_string.encode()
-		response_bytes = base64.b64decode(response_base64_bytes)
+			with open(save_to_file_path, "wb") as file_handle:
+				file_handle.write(response_bytes)
+		except Exception as ex:
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerClient: get_root_certificate: ex: {ex}")
+			raise
+		finally:
+			client_socket.close()
 
-		certificate = Certificate.load_from_bytes(
-			private_key_bytes=private_key.private_bytes(Encoding.PEM, PrivateFormat.TraditionalOpenSSL, NoEncryption()),
-			signed_certificate_bytes=response_bytes
-		)
-
-		return certificate
-
-	def close(self):
-
-		self.__client_socket.close()
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerClient: get_root_certificate: end")
 
 
 class CertificateManagerServer():
 
 	# private_key_file_path should be something like "certname.key"
 	# public_certificate_file_path should be something like "certname.crt"
-	def __init__(self, *, server_socket_factory: ServerSocketFactory, server_host_pointer: HostPointer, public_certificate_file_path: str, private_key_file_path: str, certificate_valid_days: int):
+	def __init__(self, *, server_socket_factory: ServerSocketFactory, server_host_pointer: HostPointer, public_certificate_file_path: str, private_key_file_path: str, certificate_valid_days: int, is_debug: bool = False):
 
 		self.__server_socket_factory = server_socket_factory
 		self.__server_host_pointer = server_host_pointer
 		self.__public_certificate_file_path = public_certificate_file_path
 		self.__private_key_file_path = private_key_file_path
 		self.__certificate_valid_days = certificate_valid_days
+		self.__is_debug = is_debug
 
 		self.__server_socket = None  # type: ServerSocket
 		self.__server_certificate = None  # type: Certificate
@@ -219,56 +262,121 @@ class CertificateManagerServer():
 
 	def __initialize(self):
 
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __initialize: start")
+
 		self.__server_certificate = Certificate.load_from_file(
 			private_key_file_path=self.__private_key_file_path,
 			signed_certificate_file_path=self.__public_certificate_file_path
 		)
 
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __initialize: end")
+
+	def __process_signed_certificate_request(self, *, client_socket: ClientSocket):
+
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __process_signed_certificate_request: start")
+
+		request_base64_string = client_socket.read()
+		request_base64_bytes = request_base64_string.encode()
+		request_bytes = base64.b64decode(request_base64_bytes)
+
+		certificate_request = x509.load_pem_x509_csr(
+			data=request_bytes,
+			backend=default_backend()
+		)
+
+		signed_certificate = Certificate.process_certificate_request(
+			certificate_request=certificate_request,
+			signing_certificate=self.__server_certificate,
+			valid_days_total=self.__certificate_valid_days
+		)
+
+		signed_certificate_bytes = signed_certificate.public_bytes(serialization.Encoding.PEM)
+		signed_certificate_base64_bytes = base64.b64encode(signed_certificate_bytes)  # type: bytes
+		signed_certificate_base64_string = signed_certificate_base64_bytes.decode()
+
+		client_socket.write(signed_certificate_base64_string)
+
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __process_signed_certificate_request: end")
+
+	def __process_root_certificate_request(self, *, client_socket: ClientSocket):
+
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __process_root_certificate_request: start")
+
+		signed_certificate_bytes = self.__server_certificate.get_signed_certificate().public_bytes(serialization.Encoding.PEM)
+		signed_certificate_base64_bytes = base64.b64encode(signed_certificate_bytes)  # type: bytes
+		signed_certificate_base64_string = signed_certificate_base64_bytes.decode()
+
+		client_socket.write(signed_certificate_base64_string)
+
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __process_root_certificate_request: end")
+
 	def __on_accepted_client_method(self, client_socket: ClientSocket):
 
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: start")
+
 		try:
-			request_base64_string = client_socket.read()
-			request_base64_bytes = request_base64_string.encode()
-			request_bytes = base64.b64decode(request_base64_bytes)
+			certificate_manager_client_message_type_string = client_socket.read()
+			certificate_manager_client_message_type = CertificateManagerClientMessageTypeEnum(int(certificate_manager_client_message_type_string))
 
-			certificate_request = x509.load_pem_x509_csr(
-				data=request_bytes,
-				backend=default_backend()
-			)
+			if certificate_manager_client_message_type == CertificateManagerClientMessageTypeEnum.RequestSignedCertificate:
+				self.__process_signed_certificate_request(
+					client_socket=client_socket
+				)
+			elif certificate_manager_client_message_type == CertificateManagerClientMessageTypeEnum.RequestRootCertificate:
+				self.__process_root_certificate_request(
+					client_socket=client_socket
+				)
+			else:
+				raise NotImplementedError()
 
-			signed_certificate = Certificate.process_certificate_request(
-				certificate_request=certificate_request,
-				signing_certificate=self.__server_certificate,
-				valid_days_total=self.__certificate_valid_days
-			)
-
-			signed_certificate_bytes = signed_certificate.public_bytes(serialization.Encoding.PEM)
-			signed_certificate_base64_bytes = base64.b64encode(signed_certificate_bytes)  # type: bytes
-			signed_certificate_base64_string = signed_certificate_base64_bytes.decode()
-
-			client_socket.write(signed_certificate_base64_string)
 		except ReadWriteSocketClosedException as ex:
-			print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: client socket closed")
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: client socket closed")
 			pass
 		except Exception as ex:
-			print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: ex: {ex}")
-			raise ex
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: ex: {ex}")
+			raise
 		finally:
 			client_socket.close()
 
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerServer: __on_accepted_client_method: end")
+
 	def start_accepting_clients(self):
 
-		if self.__server_socket is not None:
-			raise Exception(f"{datetime.utcnow()}: already started accepting clients")
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: start_accepting_clients: start")
 
-		self.__server_socket = self.__server_socket_factory.get_server_socket()
-		self.__server_socket.start_accepting_clients(
-			host_ip_address=self.__server_host_pointer.get_host_address(),
-			host_port=self.__server_host_pointer.get_host_port(),
-			on_accepted_client_method=self.__on_accepted_client_method
-		)
+		try:
+			if self.__server_socket is not None:
+				raise Exception(f"{datetime.utcnow()}: already started accepting clients")
+
+			self.__server_socket = self.__server_socket_factory.get_server_socket()
+			self.__server_socket.start_accepting_clients(
+				host_ip_address=self.__server_host_pointer.get_host_address(),
+				host_port=self.__server_host_pointer.get_host_port(),
+				on_accepted_client_method=self.__on_accepted_client_method
+			)
+		finally:
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerServer: start_accepting_clients: end")
 
 	def stop_accepting_clients(self):
 
-		self.__server_socket.stop_accepting_clients()
-		self.__server_socket.close()
+		if self.__is_debug:
+			print(f"{datetime.utcnow()}: CertificateManagerServer: stop_accepting_clients: start")
+
+		try:
+			self.__server_socket.stop_accepting_clients()
+			self.__server_socket.close()
+		finally:
+			if self.__is_debug:
+				print(f"{datetime.utcnow()}: CertificateManagerServer: stop_accepting_clients: end")
