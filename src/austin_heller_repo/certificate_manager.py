@@ -8,12 +8,15 @@ import errno
 import tempfile
 from datetime import datetime, timedelta
 from enum import IntEnum
+import re
+import ipaddress
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
 from cryptography.x509.oid import NameOID
+from cryptography.x509.general_name import GeneralName
 from austin_heller_repo.socket import ClientSocketFactory, ClientSocket, ServerSocketFactory, ServerSocket, ReadWriteSocketClosedException
 from austin_heller_repo.common import HostPointer
 
@@ -167,6 +170,8 @@ class CertificateManagerClient():
 				backend=default_backend()
 			)
 
+
+
 			builder = x509.CertificateSigningRequestBuilder() \
 				.subject_name(x509.Name([
 					x509.NameAttribute(NameOID.COMMON_NAME, name)
@@ -176,6 +181,13 @@ class CertificateManagerClient():
 						ca=False,
 						path_length=None
 					),
+					critical=True
+				)
+
+			if re.match(r"^\d{1,3}\.\d{1.3}\.\d{1,3}\.\d{1,3}$", name):
+				ip_address = ipaddress.IPv4Address(name)
+				builder = builder.add_extension(
+					x509.SubjectAlternativeName([x509.general_name.IPAddress(ip_address)]),
 					critical=True
 				)
 
